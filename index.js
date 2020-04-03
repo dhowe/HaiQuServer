@@ -12,7 +12,7 @@ const DbOpts = { useNewUrlParser: true, useUnifiedTopology: true };
 // to list tweets by newest first
 // db.getCollection('tweets').find({}).sort({ _id: -1 })
 
-// TODO:  [reply to John]
+// TODO:
 // pick a 'selected' on a timer a tweet it
 // end on a RiTa verb or noun
 
