@@ -1,8 +1,9 @@
-const MongoClient = require('mongodb').MongoClient;
+const { MongoClient } = require('mongodb');
 const RiTa = require('rita');
 const RiTwit = require('ritwit');
 const config = require('./config');
 const stops = require('./stops');
+const { insert, list, mark, count } = require('./dbfun');
 
 const DbStr = 'mongodb://localhost:27017/haiqubot';
 const DbOpts = { useNewUrlParser: true, useUnifiedTopology: true };
@@ -16,46 +17,62 @@ const DbOpts = { useNewUrlParser: true, useUnifiedTopology: true };
 // pick a 'selected' on a timer a tweet it
 // end on a RiTa verb or noun
 
-MongoClient.connect(DbStr, DbOpts, (e, client) => {
-    if (e) throw err;
-    const db = client.db('haiqubot');
-    const insert = (tweet) => db.collection('tweets').insertOne(tweet);
-    const list = () => db.collection('tweets').find({ selected: true }).toArray();
-    const mark = (tid) => db.collection('tweets')
-      .updateOne({ _id: ObjectId(tid) }, { tweetedAt: new Date() });
-    const count = () => db.collection('tweets').countDocuments();
-    const rt = new RiTwit(config);
-    
-    let processing = false;
-    rt.onTweetMatching('Quarantine', function (tweet) {
-      if (processing) {
-        console.log('[BUSY]');
-        return;
-      }
-      if (tweet.retweeted_status) return; // no retweets
-      if (tweet.lang !== 'en') return; // only english
-      let text = cleanTweet(tweet.text);  // cleaning
-      let haiku = text && matchSyllables(text, [5, 7, 5]);
-      if (haiku) {
-        processing = true;
-        tweet.haiku = haiku.join(' / ');
-        tweet.selected = false;
-        tweet.tweetedAt = -1;
-        insert(tweet).then(() => {
-          count().then(num => {
-            console.log('INSERT', tweet._id, tweet.haiku, num < 1000 ? num + '/1000' : '');
-          }).catch((err) => {
-            console.warn('Count', err);
-          });
-          processing = false;
-        }).catch((err) => {
-          console.warn('Insert', err);
-        });
-      }
-    });
-  });
+let busy = false;
+const rt = new RiTwit(config);
+const tweetInterval = 10000;
 
-// Prepare tweet for processing if ok, otherwise false
+MongoClient.connect(DbStr, DbOpts, (e, client) => {
+  if (e) throw err;
+  const db = client.db('haiqubot');
+  rt.onTweetMatching('Quarantine', function (tweet) {
+    if (busy) {
+      console.log('[BUSY]');
+      return;
+    }
+    if (tweet.retweeted_status) return; // no retweets
+    if (tweet.lang !== 'en') return; // only english
+    let text = cleanTweet(tweet.text);  // cleaning
+    let haiku = text && matchSyllables(text, [5, 7, 5]);
+    if (haiku) {
+      busy = true;
+      tweet.haiku = haiku.join(' / ');
+      tweet.selected = false;
+      tweet.tweetedAt = -1;
+      insert(db, tweet).then(() => {
+        count().then(num => {
+          console.log('INSERT', tweet._id, tweet.haiku, num < 1000 ? num + '/1000' : '');
+        }).catch((err) => {
+          console.warn('Count', err);
+        });
+        busy = false;
+      }).catch((err) => {
+        console.warn('Insert', err);
+      });
+    }
+  });
+});
+
+function fetchTweets(tweet) {
+
+}
+
+function publishTweet(tweet) {
+  busy = true;
+  if (0) {
+    rt.tweet(tweet.haiku, e => {
+      if (e) console.error('Insert', e);
+    });
+  }
+  else {
+    console.log('SENDING', tweet.haiku);
+    setTimeout(() => {
+      console.log('SENT', tweet.haiku);
+      busy = false;
+    }, 2000);
+  }
+}
+
+// Prepare tweet for busy if ok, otherwise false
 function cleanTweet(tweet) {
   let result = [], words = RiTa.tokenize(tweet);
   for (let i = 0; i < words.length; i++) {
@@ -68,9 +85,9 @@ function cleanTweet(tweet) {
 }
 
 function validate(lines) {
-  let lastLine = lines[lines.length-1];
+  let lastLine = lines[lines.length - 1];
   let lastWords = RiTa.tokenize(lastLine);
-  let lastWord = lastWords[lastWords.length-1];
+  let lastWord = lastWords[lastWords.length - 1];
   //console.log('CHECK: ' + lines.join(' / '), lastWord);
   if (stops.includes(lastWord.toLowerCase())) {
     return console.log('REJECT ------------------------ ' + lines.join(' / '));
